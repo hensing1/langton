@@ -1,9 +1,12 @@
+#include <curses.h>
+#include <signal.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
 
-#define GRID_X 50 
-#define GRID_Y 40
+#define GRID_X 80 
+#define GRID_Y 60
 #define ANT_START_X GRID_X/2
 #define ANT_START_Y GRID_Y/2
 #define ANT_START_DIR E
@@ -22,9 +25,11 @@ typedef enum {
 typedef struct {
     Pos pos;
     Dir dir;
-} State;
+} AntState;
 
-typedef char Cell;
+typedef enum {
+    WHITE, BLACK
+} Cell;
 
 typedef struct {
     Cell** cells;
@@ -32,17 +37,52 @@ typedef struct {
     size_t size_y;
 } Grid;
 
+typedef struct {
+    Grid* grid;
+    AntState* ant_state;
+    unsigned int iteration;
+    unsigned int ips; // iterations per second
+    bool running;
+    size_t screen_width;
+    size_t screen_height;
+} Simulation;
 
-char step(State* ant_state, Grid* grid);
+const char* symbols[] = {
+    "██", "░░"
+};
+
+
+void init_ui(Simulation* sim);
+void print_ant(Grid* grid, AntState* ant_state);
+void print_cell(Grid* grid, Pos position);
 void print_grid(Grid* grid);
+char step(Simulation* sim);
+void quit(int);
 
 
 int main(int argc, char** argv) {
 
+    // initialize ncurses
+    initscr();
+    noecho(); // no input echo
+    cbreak(); // no input buffering
+    curs_set(false); // no cursor
+    nodelay(stdscr, true); // getch() is non-blocking
+    keypad(stdscr, true); // special keys (arrows etc)
+
+    // interrupt handler
+    signal(SIGINT, quit);
+
+    Simulation* sim = malloc(sizeof(Simulation));
+    sim->ips = 25;
+    sim->iteration = 0;
+    getmaxyx(stdscr, sim->screen_height, sim->screen_width);
+
+
     // initialize grid
     Grid* grid = malloc(sizeof(Grid));
-    grid->size_x = GRID_X;
-    grid->size_y = GRID_Y;
+    grid->size_x = sim->screen_width / 2;
+    grid->size_y = sim->screen_height - 7;
     grid->cells = malloc(sizeof(Cell*) * grid->size_y);
 
     for (size_t i = 0; i < grid->size_y; i++) {
@@ -50,30 +90,58 @@ int main(int argc, char** argv) {
     }
 
     // initialize ant
-    State* ant_state = malloc(sizeof(State));
-    *ant_state = (State) {
+    AntState* ant_state = malloc(sizeof(AntState));
+    *ant_state = (AntState) {
         .pos = (Pos) {
-            .x = ANT_START_X,
-            .y = ANT_START_Y
+            .x = grid->size_x / 2,
+            .y = grid->size_y / 2
         },
         .dir = ANT_START_DIR
     };
 
+    sim->grid = grid;
+    sim->ant_state = ant_state;
+
     // let it rip
-    print_grid(grid);
     char valid = 1;
     while (valid) {
-        valid = step(ant_state, grid);
-        printf("\x1b[%luA", grid->size_y);
-        print_grid(grid);
-        usleep(1000 * DELAY_MILLIS);
+        Pos old_ant_pos = ant_state->pos;
+        valid = step(sim);
+        print_cell(grid, old_ant_pos);
+        if (valid) {
+            print_ant(grid, ant_state);
+        }
+        usleep(1000000 / sim->ips);
     }
 
     return 0;
 }
 
 
-char step(State* ant_state, Grid* grid) {
+void print_header(Simulation* sim) {
+    if (sim->running) {
+        mvprintw(0, 0, "[p]ause \t[q]uit");
+    }
+    else {
+        mvprintw(0, 0, "[r]un \t[s]tep \t[q]uit");
+    }
+
+    mvprintw(2, 0, "Speed: %d it./sec", sim->ips);
+    mvprintw(3, 0, "[+]: increase speed \t[-]: decrease speed");
+
+    mvprintw(5, 0, "Iteration: %d", sim->iteration);
+}
+
+
+void init_ui(Simulation* sim) {
+
+    print_header(sim);
+
+    
+}
+
+
+char step(AntState* ant_state, Grid* grid) {
     //scan 
     Cell current_cell = grid->cells[ant_state->pos.y][ant_state->pos.x];
 
@@ -132,4 +200,10 @@ void print_grid(Grid* grid) {
         }
         printf("\n");
     }
+}
+
+
+void quit(int sig) {
+    endwin();
+    exit(0);
 }
